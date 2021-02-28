@@ -1877,6 +1877,54 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
       goto out;
     }
 
+  gcry_sexp_t list = gcry_sexp_find_token (sexp, "key-type", 0);
+  size_t len = 0;
+  const char *key_type = gcry_sexp_nth_data(list, 1, &len);
+
+  int skip = 0;
+  if (skip == 0 && 0 == strncmp("ssh-rsa-cert-v01@openssh.com", key_type, len))
+    {
+      if (0 != with_secret)
+        {
+          log_error ("extracing secret is not supported (and should not be?)\n");
+          err = 1;
+          goto out;
+        }
+      gcry_sexp_t certificate_sexp = gcry_sexp_find_token (sexp, "certificate", 0);
+      size_t certificate_sexp_b64_len = 0;
+      const char *certificate_sexp_b64 = gcry_sexp_nth_data(certificate_sexp, 1, &certificate_sexp_b64_len);
+
+      char *certificate = xtrymalloc (certificate_sexp_b64_len + 1);
+      strncpy(certificate, certificate_sexp_b64, certificate_sexp_b64_len);
+      certificate[certificate_sexp_b64_len] = '\0';
+
+      struct b64state b64s = {};
+      long int len = 0;
+
+      err = b64dec_start (&b64s, NULL);
+      err = b64dec_proc (&b64s, certificate, certificate_sexp_b64_len, &len);
+      err = b64dec_finish (&b64s);
+      err = stream_write_data (stream, certificate, len);
+
+      // err = stream_write_cstring (stream, "ssh-rsa-cert-v01@openssh.com");
+      // err = stream_write_cstring (stream, "<nonce>");
+
+      // gcry_sexp_t value_list = gcry_sexp_cadr (sexp);
+
+      // gcry_sexp_t n = gcry_sexp_find_token (value_list, "n", 1);
+      // gcry_sexp_t e = gcry_sexp_find_token (value_list, "e", 1);
+
+
+      // gcry_mpi_t mpi_n = gcry_sexp_nth_mpi (n, 1, GCRYMPI_FMT_STD);
+      // gcry_mpi_t mpi_e = gcry_sexp_nth_mpi (e, 1, GCRYMPI_FMT_STD);
+      // err = stream_write_mpi (stream, mpi_n);
+      // err = stream_write_mpi (stream, mpi_e);
+
+      // gcry_mpi_release (mpi_n);
+      // gcry_mpi_release (mpi_e);
+    }
+  else
+   {
   /* Get the type of the key expression.  */
   data = gcry_sexp_nth_data (sexp, 0, &datalen);
   if (!data)
@@ -1896,10 +1944,6 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
       err = gpg_error (GPG_ERR_INV_SEXP);
       goto out;
     }
-
-  gcry_sexp_t list = gcry_sexp_find_token (sexp, "key-type", 0);
-  size_t len = 0;
-  const char *key_type = gcry_sexp_nth_data(list, 1, &len);
 
 
   /* Get key value list.  */
@@ -2025,7 +2069,8 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
 
         xfree(certificate);
     }
-    
+  }
+
   if (es_fclose_snatch (stream, &blob, &blob_size))
     {
       err = gpg_error_from_syserror ();
@@ -2038,10 +2083,10 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
   *r_blob_size = blob_size;
 
  out:
-  gcry_sexp_release (value_list);
-  gcry_sexp_release (value_pair);
-  es_fclose (stream);
-  es_free (blob);
+  // gcry_sexp_release (value_list);
+  // gcry_sexp_release (value_pair);
+  // es_fclose (stream);
+  // es_free (blob);
 
   return err;
 }
@@ -2113,6 +2158,80 @@ ssh_receive_key (estream_t stream, gcry_sexp_t *key_new, int secret,
 
   log_info("key spec flags: 0x%x", spec.flags);
 
+  int skip = 0;
+  if (skip == 0 && 0 == strcmp("ssh-rsa-cert-v01@openssh.com", key_type))
+    {
+      /*
+        if ((r = sshbuf_put_stringb(b, key->cert->certblob)) != 0 ||
+                (r = sshbuf_put_bignum2(b, rsa_d)) != 0 ||
+                (r = sshbuf_put_bignum2(b, rsa_iqmp)) != 0 ||
+                (r = sshbuf_put_bignum2(b, rsa_p)) != 0 ||
+                (r = sshbuf_put_bignum2(b, rsa_q)) != 0)
+      */
+       byte* certificate = NULL;
+       u32 certificate_len = 0;
+       gcry_mpi_t d, iqmp, p, q;
+       if (
+       (err = stream_read_string(stream, 0, &certificate, &certificate_len)) ||
+       (err = stream_read_mpi (stream, secret, &d)) || 
+       (err = stream_read_mpi (stream, secret, &iqmp)) 
+      // TODO: these two seem to optionally appear, could be issue with serialization from gpg store
+      //  (err = stream_read_mpi (stream, secret, &p)) ||
+      //  (err = stream_read_mpi (stream, secret, &q))
+       ) {
+          log_error ("error reading certificate\n");
+
+       }
+       if (read_comment)
+         {
+            err = stream_read_cstring (stream, &comment);
+            if (err)
+              goto out;
+            log_info("key comment: %s", comment);
+         }
+
+       if (err)
+        goto out;
+
+       struct b64state b64s = {};
+       long int certificate_b64_len = 0; 
+       estream_t b64_stream = es_fopenmem(0, "wt");
+       err = b64enc_start_es (&b64s, b64_stream, "");
+       err = b64enc_write (&b64s, certificate, certificate_len);
+       err = b64enc_finish (&b64s);
+       certificate_b64_len = es_ftell (b64_stream);
+       
+       char *certificate_b64 = xtrymalloc (certificate_b64_len + 1); 
+       certificate_b64[certificate_b64_len] = 0;
+       size_t nread;
+       
+       es_fseek(b64_stream, 0, SEEK_SET);
+       es_read (b64_stream, certificate_b64, certificate_b64_len, &nread);
+       es_fclose (b64_stream);
+ 
+       err = gcry_sexp_build (&key, NULL,
+        "(private-key "
+        " (rsa "
+        "  (n %m)"
+        "  (e %m)"
+        "  )"
+        " (comment %s)"
+        " (key-type %s)"
+        " (certificate %s)"
+        ")",
+        d,  // TODO: get n, e, prob from certificate blob 
+        iqmp,
+        comment!=NULL?comment:"",
+        key_type,
+        certificate_b64);
+
+        if (key_spec)
+          *key_spec = spec;
+        *key_new = key;
+
+    }
+  else 
+    {
   unsigned char *cert_buffer = NULL;
   u32 cert_buffer_len = 0;
 
@@ -2358,6 +2477,7 @@ result);
         goto out;
     }
 
+
   if (key_spec)
     *key_spec = spec;
   *key_new = key;
@@ -2369,7 +2489,7 @@ result);
   xfree (comment);
 
   xfree (cert_buffer);
-
+}
   return err;
 }
 
@@ -2476,7 +2596,7 @@ ssh_key_grip (gcry_sexp_t key, unsigned char *buffer)
 
   list = gcry_sexp_find_token (key, "certificate", 0);
   size_t len = 0;
-  const char *data = gcry_sexp_nth_data(list, 0, &len);
+  const char *data = gcry_sexp_nth_data(list, 1, &len);
 
   if (data)
     {
@@ -3211,8 +3331,12 @@ ssh_identity_register (ctrl_t ctrl, ssh_key_type_spec_t *spec,
     goto key_exists; /* Yes, key is available.  */
 
   err = ssh_key_extract_comment (key, &comment);
-  if (err)
-    goto out;
+  if (err) 
+    {
+      log_error ("could not extract the comment from key");
+
+      goto out;
+    }
 
   if ( asprintf (&description,
                  L_("Please enter a passphrase to protect"

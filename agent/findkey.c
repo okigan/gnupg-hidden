@@ -721,8 +721,7 @@ read_key_file (const unsigned char *grip, gcry_sexp_t *result)
   if (!fp)
     {
       err = gpg_error_from_syserror ();
-      if (gpg_err_code (err) != GPG_ERR_ENOENT)
-        log_error ("can't open '%s': %s\n", fname, gpg_strerror (err));
+      log_error ("can't open '%s': %s\n", fname, gpg_strerror (err));
       xfree (fname);
       return err;
     }
@@ -1260,7 +1259,7 @@ agent_public_key_from_file (ctrl_t ctrl,
     array[i] = NULL;
 
   err = extract_private_key (s_skey, 0, &algoname, &npkey, NULL, &elems,
-                             array, DIM (array), &curve, &flags, &key_type_sexp);
+                             array, DIM (array), &curve, &flags);
   if (err)
     {
       gcry_sexp_release (s_skey);
@@ -1304,7 +1303,7 @@ agent_public_key_from_file (ctrl_t ctrl,
      them.  */
   assert (sizeof (size_t) <= sizeof (void*));
 
-  format = xtrymalloc (15+4+7*npkey+10+15+1+1+5);
+  format = xtrymalloc (15+4+7*npkey+10+15+1+1+5+10);
   if (!format)
     {
       err = gpg_error_from_syserror ();
