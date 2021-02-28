@@ -332,7 +332,7 @@ static const ssh_key_type_spec_t ssh_key_types[] =
     },
     {
       "ssh-rsa-cert-v01@openssh.com", "RSA",
-      GCRY_PK_RSA, "nedupq", "ne",   "s",  "nedpqu",
+      GCRY_PK_RSA, "nedupq", "en",   "s",  "nedpqu",
       ssh_key_modifier_rsa, ssh_signature_encoder_rsa,
       NULL, NULL, 0, SPEC_FLAG_USE_PKCS1V2 | SPEC_FLAG_WITH_CERT
     },
@@ -1310,14 +1310,14 @@ ssh_receive_mpint_list (estream_t stream, int secret,
   for (i = 0; i < elems_n; i++)
     {
       if (secret)
-	elem_is_secret = !strchr (elems_public, elems[i]);
+        elem_is_secret = !strchr (elems_public, elems[i]);
 
       if (cert && !elem_is_secret)
         err = stream_read_mpi (cert, elem_is_secret, &mpis[i]);
       else
         err = stream_read_mpi (stream, elem_is_secret, &mpis[i]);
       if (err)
-	goto out;
+        goto out;
     }
 
   *mpi_list = mpis;
@@ -1899,8 +1899,7 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
 
   gcry_sexp_t list = gcry_sexp_find_token (sexp, "key-type", 0);
   size_t len = 0;
-  const char *key_type = gcry_sexp_nth_data(list, 1, &len);
-
+  const char *key_type = gcry_sexp_nth_data (list, 1, &len);
 
   /* Get key value list.  */
   value_list = gcry_sexp_cadr (sexp);
@@ -1940,19 +1939,39 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
     {
       if (key_type)
         {
-          err = stream_write_string (stream, key_type, len);
-          if (err)
-            goto out;
-          err = stream_write_string (stream, "<nonce>", strlen("<nonce>"));
-          if (err)
-            goto out;
+          // err = stream_write_string (stream, key_type, len);
+          // if (err)
+          //   goto out;
+          // err = stream_write_string (stream, "<nonce>", strlen ("<nonce>"));
+          // if (err)
+          //   goto out;
+
+          gcry_sexp_t certificate_sexp = gcry_sexp_find_token (sexp, "certificate", 0);
+          size_t certificate_sexp_b64_len = 0;
+          const char *certificate_sexp_b64 = gcry_sexp_nth_data(certificate_sexp, 1, &certificate_sexp_b64_len);
+
+          char *certificate = xtrymalloc (certificate_sexp_b64_len + 1);
+          strncpy(certificate, certificate_sexp_b64, certificate_sexp_b64_len);
+          certificate[certificate_sexp_b64_len] = '\0';
+
+          struct b64state b64s = {};
+          long int len = 0;
+
+          err = b64dec_start (&b64s, NULL);
+          err = b64dec_proc (&b64s, certificate, certificate_sexp_b64_len, &len);
+          err = b64dec_finish (&b64s);
+          err = stream_write_data (stream, certificate, len);
+
+          xfree (certificate);
+
+          goto done;
         }
-      else 
+      else
         {
           /* Note: This is also used for EdDSA.  */
           err = stream_write_cstring (stream, key_spec.ssh_identifier);
           if (err)
-            goto out;          
+            goto out;
         }
     }
 
@@ -1962,12 +1981,13 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
       gcry_sexp_release (value_pair);
       value_pair = gcry_sexp_find_token (value_list, p_elems, 1);
       if (!value_pair)
-	{
-	  err = gpg_error (GPG_ERR_INV_SEXP);
-	  goto out;
-	}
+        {
+          err = gpg_error (GPG_ERR_INV_SEXP);
+          goto out;
+        }
       if ((key_spec.flags & SPEC_FLAG_IS_EdDSA))
         {
+
           data = gcry_sexp_nth_data (value_pair, 1, &datalen);
           if (!data)
             {
@@ -2001,31 +2021,8 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
             goto out;
         }
     }
-    
-  if (key_type)
-    {
-        gcry_sexp_t certificate_sexp = gcry_sexp_find_token (sexp, "certificate", 0);
-        size_t certificate_sexp_b64_len = 0;
-        const char *certificate_sexp_b64 = gcry_sexp_nth_data(certificate_sexp, 1, &certificate_sexp_b64_len);
 
-        char *certificate = xtrymalloc (certificate_sexp_b64_len + 1);
-        strncpy(certificate, certificate_sexp_b64, certificate_sexp_b64_len);
-        certificate[certificate_sexp_b64_len] = '\0';
-
-        struct b64state b64s = {};
-        long int len = 0;
-
-        err = b64dec_start (&b64s, NULL);
-        err = b64dec_proc (&b64s, certificate, certificate_sexp_b64_len, &len);
-        err = b64dec_finish (&b64s);
-        err = stream_write_data (stream, certificate, len);
-        
-        if (err)
-          goto out;
-
-        xfree(certificate);
-    }
-    
+done:
   if (es_fclose_snatch (stream, &blob, &blob_size))
     {
       err = gpg_error_from_syserror ();
@@ -2037,7 +2034,7 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
   blob = NULL;
   *r_blob_size = blob_size;
 
- out:
+out:
   gcry_sexp_release (value_list);
   gcry_sexp_release (value_pair);
   es_fclose (stream);
@@ -2045,7 +2042,6 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
 
   return err;
 }
-
 
 /*
 
@@ -2274,7 +2270,7 @@ ssh_receive_key (estream_t stream, gcry_sexp_t *key_new, int secret,
     {
       err = (*spec.key_modifier) (elems, mpi_list);
       if (err)
-	goto out;
+        goto out;
     }
 
   if ((spec.flags & SPEC_FLAG_IS_EdDSA))
@@ -2306,7 +2302,7 @@ ssh_receive_key (estream_t stream, gcry_sexp_t *key_new, int secret,
       // if (err)
       //   goto out;
 
-                struct b64state b64s;
+          struct b64state b64s;
           estream_t stream;
           long int len;
 
@@ -2473,17 +2469,19 @@ ssh_key_grip (gcry_sexp_t key, unsigned char *buffer)
     }
 
   gcry_sexp_t list = NULL;
-
-  list = gcry_sexp_find_token (key, "certificate", 0);
   size_t len = 0;
-  const char *data = gcry_sexp_nth_data(list, 0, &len);
+  const char *data = NULL;
+
+  list = gcry_sexp_find_token (key, "key-type", 0);
+  len = 0;
+  data = gcry_sexp_nth_data(list, 1, &len);
 
   if (data)
     {
       gcry_md_hd_t md = NULL;
       gcry_md_open (&md, GCRY_MD_SHA1, 0);
 
-      gcry_md_write (md, buffer, strlen (buffer));
+      gcry_md_write (md, buffer, 20);
       gcry_md_write (md, data, len);
 
       memcpy (buffer, gcry_md_read (md, GCRY_MD_SHA1), 20);

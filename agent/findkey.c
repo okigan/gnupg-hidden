@@ -1295,7 +1295,8 @@ agent_public_key_from_file (ctrl_t ctrl,
   gcry_sexp_release (s_skey);
   s_skey = NULL;
 
-
+  // TODO: the following FIXME is so true -- following code is
+  // prone to buffer overrun
   /* FIXME: The following thing is pretty ugly code; we should
      investigate how to make it cleaner.  Probably code to handle
      canonical S-expressions in a memory buffer is better suited for
@@ -1304,7 +1305,7 @@ agent_public_key_from_file (ctrl_t ctrl,
      them.  */
   assert (sizeof (size_t) <= sizeof (void*));
 
-  format = xtrymalloc (15+4+7*npkey+10+15+1+1+5);
+  format = xtrymalloc (15+4+7*npkey+10+15+1+1+5+4096);
   if (!format)
     {
       err = gpg_error_from_syserror ();
