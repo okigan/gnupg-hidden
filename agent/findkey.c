@@ -1245,13 +1245,13 @@ agent_public_key_from_file (ctrl_t ctrl,
   gcry_mpi_t array[10];
   gcry_sexp_t curve = NULL;
   gcry_sexp_t flags = NULL;
-  gcry_sexp_t uri_sexp, comment_sexp;
-  const char *uri, *comment;
-  size_t uri_length, comment_length;
-  int uri_intlen, comment_intlen;
+  gcry_sexp_t uri_sexp, comment_sexp, key_type_sexp, certificate_sexp;
+  const char *uri, *comment, *key_type, *certificate;
+  size_t uri_length, comment_length, key_type_length, certificate_length;
+  int uri_intlen, comment_intlen, key_type_intlen, certificate_intlen;
   char *format, *p;
-  void *args[2+7+2+2+1]; /* Size is 2 + max. # of elements + 2 for uri + 2
-                            for comment + end-of-list.  */
+  void *args[2+7+2+2+2+1]; /* Size is 2 + max. # of elements + 2 for uri + 2
+                            for comment + key_type + certificate +  end-of-list.  */
   int argidx;
   gcry_sexp_t list = NULL;
   const char *s;
@@ -1264,11 +1264,21 @@ agent_public_key_from_file (ctrl_t ctrl,
   if (err)
     return err;
 
+  if (opt.verbose > 1) {
+      char hexgrip[40+4+1];
+      bin2hex (grip, 20, hexgrip);
+
+      log_info ("hexgrip: %s", hexgrip);
+      char debug_buffer[8192] = "\0";
+      err = gcry_sexp_sprint (s_skey, GCRYSEXP_FMT_ADVANCED, debug_buffer, sizeof(debug_buffer));
+      log_info ("loaded key sExpression: %s", debug_buffer);
+  }
+  
   for (i=0; i < DIM (array); i++)
     array[i] = NULL;
 
   err = extract_private_key (s_skey, 0, &algoname, &npkey, NULL, &elems,
-                             array, DIM (array), &curve, &flags);
+                             array, DIM (array), &curve, &flags, &key_type_sexp);
   if (err)
     {
       gcry_sexp_release (s_skey);
@@ -1287,10 +1297,25 @@ agent_public_key_from_file (ctrl_t ctrl,
   if (comment_sexp)
     comment = gcry_sexp_nth_data (comment_sexp, 1, &comment_length);
 
+  key_type = NULL;
+  key_type_length = 0;
+  key_type_sexp = gcry_sexp_find_token (s_skey, "key-type", 0);
+  if (key_type_sexp)
+    key_type = gcry_sexp_nth_data (key_type_sexp, 1, &key_type_length);
+
+  certificate = NULL;
+  certificate_length = 0;
+  certificate_sexp = gcry_sexp_find_token (s_skey, "certificate", 0);
+  if (certificate_sexp)
+    certificate = gcry_sexp_nth_data (certificate_sexp, 1, &certificate_length);
+
+
   gcry_sexp_release (s_skey);
   s_skey = NULL;
 
 
+  // TODO: the following FIXME is so true -- following code is
+  // prone to buffer overrun
   /* FIXME: The following thing is pretty ugly code; we should
      investigate how to make it cleaner.  Probably code to handle
      canonical S-expressions in a memory buffer is better suited for
@@ -1299,7 +1324,7 @@ agent_public_key_from_file (ctrl_t ctrl,
      them.  */
   assert (sizeof (size_t) <= sizeof (void*));
 
-  format = xtrymalloc (15+4+7*npkey+10+15+1+1);
+  format = xtrymalloc (15+4+7*npkey+10+15+1+1+5+4096);
   if (!format)
     {
       err = gpg_error_from_syserror ();
@@ -1342,6 +1367,23 @@ agent_public_key_from_file (ctrl_t ctrl,
       args[argidx++] = (void *)&comment_intlen;
       args[argidx++] = (void*)&comment;
     }
+  if (key_type)
+    {
+      p = stpcpy (p, "(key-type %b)");
+      log_assert (argidx+1 < DIM (args));
+      key_type_intlen = (int)key_type_length;
+      args[argidx++] = (void *)&key_type_intlen;
+      args[argidx++] = (void*)&key_type;
+    }
+  if (certificate)
+    {
+      p = stpcpy (p, "(certificate %b)");
+      log_assert (argidx+1 < DIM (args));
+      certificate_intlen = (int)certificate_length;
+      args[argidx++] = (void *)&certificate_intlen;
+      args[argidx++] = (void*)&certificate;
+    }
+  
   *p++ = ')';
   *p = 0;
   assert (argidx < DIM (args));

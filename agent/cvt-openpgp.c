@@ -1194,7 +1194,8 @@ extract_private_key (gcry_sexp_t s_key, int req_private_key_data,
                      const char **r_algoname, int *r_npkey, int *r_nskey,
                      const char **r_elems,
                      gcry_mpi_t *array, int arraysize,
-                     gcry_sexp_t *r_curve, gcry_sexp_t *r_flags)
+                     gcry_sexp_t *r_curve, gcry_sexp_t *r_flags,
+                     gcry_sexp_t *r_key_type)
 {
   gpg_error_t err;
   gcry_sexp_t list, l2;
@@ -1203,6 +1204,7 @@ extract_private_key (gcry_sexp_t s_key, int req_private_key_data,
   int npkey, nskey;
   gcry_sexp_t curve = NULL;
   gcry_sexp_t flags = NULL;
+  gcry_sexp_t key_type = NULL;
 
   *r_curve = NULL;
   *r_flags = NULL;
@@ -1223,6 +1225,8 @@ extract_private_key (gcry_sexp_t s_key, int req_private_key_data,
       log_error ("invalid private key format\n");
       return gpg_error (GPG_ERR_BAD_SECKEY);
     }
+
+  key_type = gcry_sexp_find_token (list, "key_type", 0);
 
   l2 = gcry_sexp_cadr (list);
   gcry_sexp_release (list);
@@ -1305,6 +1309,9 @@ extract_private_key (gcry_sexp_t s_key, int req_private_key_data,
       *r_curve = curve;
       *r_flags = flags;
 
+      if (r_key_type)
+        *r_key_type = key_type;
+
       return 0;
     }
 }
@@ -1323,6 +1330,7 @@ convert_to_openpgp (ctrl_t ctrl, gcry_sexp_t s_key, const char *passphrase,
   gcry_mpi_t array[10];
   gcry_sexp_t curve = NULL;
   gcry_sexp_t flags = NULL;
+  gcry_sexp_t key_name = NULL;
   char protect_iv[16];
   char salt[8];
   unsigned long s2k_count;
@@ -1336,7 +1344,7 @@ convert_to_openpgp (ctrl_t ctrl, gcry_sexp_t s_key, const char *passphrase,
     array[i] = NULL;
 
   err = extract_private_key (s_key, 1, &algoname, &npkey, &nskey, NULL,
-                             array, DIM (array), &curve, &flags);
+                             array, DIM (array), &curve, &flags, &key_name);
   if (err)
     return err;
 
