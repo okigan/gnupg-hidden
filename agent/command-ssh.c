@@ -1897,10 +1897,6 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
       goto out;
     }
 
-  gcry_sexp_t list = gcry_sexp_find_token (sexp, "key-type", 0);
-  size_t len = 0;
-  const char *key_type = gcry_sexp_nth_data (list, 1, &len);
-
   /* Get key value list.  */
   value_list = gcry_sexp_cadr (sexp);
   if (!value_list)
@@ -1937,15 +1933,12 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
     }
   else
     {
-       if (key_type)
-        {
-          // err = stream_write_string (stream, key_type, len);
-          // if (err)
-          //   goto out;
-          // err = stream_write_string (stream, "<nonce>", strlen ("<nonce>"));
-          // if (err)
-          //   goto out;
+      gcry_sexp_t list = gcry_sexp_find_token (sexp, "key-type", 0);
+      size_t len = 0;
+      const char *key_type = gcry_sexp_nth_data (list, 1, &len);
 
+      if (key_type)
+        {
           gcry_sexp_t certificate_sexp = gcry_sexp_find_token (sexp, "certificate", 0);
           size_t certificate_sexp_b64_len = 0;
           const char *certificate_sexp_b64 = gcry_sexp_nth_data(certificate_sexp, 1, &certificate_sexp_b64_len);
@@ -1955,15 +1948,17 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
           certificate[certificate_sexp_b64_len] = '\0';
 
           struct b64state b64s = {};
-          long int len = 0;
+          long int certificate_len = 0;
 
           err = b64dec_start (&b64s, NULL);
-          err = b64dec_proc (&b64s, certificate, certificate_sexp_b64_len, &len);
-          err = b64dec_finish (&b64s);
-          err = stream_write_data (stream, certificate, len);
+          err = err || b64dec_proc (&b64s, certificate, certificate_sexp_b64_len, &certificate_len);
+          err = err || b64dec_finish (&b64s);
+          err = err | stream_write_data (stream, certificate, certificate_len);
 
           xfree (certificate);
 
+          if (err)
+            goto out;
           goto done;
         }
       else
@@ -2021,7 +2016,7 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
             goto out;
         }
     }
-
+    
 done:
   if (es_fclose_snatch (stream, &blob, &blob_size))
     {
@@ -2101,23 +2096,21 @@ ssh_receive_key (estream_t stream, gcry_sexp_t *key_new, int secret,
   if (err)
     goto out;
 
-  log_info("key type: %s", key_type);
+  if (opt.verbose) 
+    log_info("key type: %s", key_type);
 
   err = ssh_key_type_lookup (key_type, 0, &spec);
   if (err)
     goto out;
 
-  log_info("key spec flags: 0x%x", spec.flags);
+  if (opt.verbose) 
+    log_info("key spec flags: 0x%x", spec.flags);
 
   unsigned char *cert_buffer = NULL;
   u32 cert_buffer_len = 0;
 
   if ((spec.flags & SPEC_FLAG_WITH_CERT))
     {
-      /* in case of certs it reads part of cert to get public mpints
-      and parts of the payload for private mpints -- so -cert.pub files
-      have private mpints? or is it just reading random data to fill out the
-      key struct ? */
       /* This is an OpenSSH certificate+private key.  The certificate
          is an SSH string and which we store in an estream object. */
       char *cert_key_type;
@@ -2137,7 +2130,8 @@ ssh_receive_key (estream_t stream, gcry_sexp_t *key_new, int secret,
       if (err)
         goto out;
 
-      log_info ("certificate type: %s", cert_key_type);
+      if (opt.verbose) 
+        log_info ("certificate type: %s", cert_key_type);
 
       if (strcmp (cert_key_type, key_type) )
         {
@@ -2258,7 +2252,8 @@ ssh_receive_key (estream_t stream, gcry_sexp_t *key_new, int secret,
       err = stream_read_cstring (stream, &comment);
       if (err)
 	goto out;
-      log_info("key comment: %s", comment);
+      if (opt.verbose) 
+        log_info("key comment: %s", comment);
     }
 
   if (secret)
@@ -2294,55 +2289,57 @@ ssh_receive_key (estream_t stream, gcry_sexp_t *key_new, int secret,
                                  comment? comment:"");
         }
     }
-  else if (0==strcmp(spec.ssh_identifier, "ssh-rsa-cert-v01@openssh.com"))
+  else if (0 == strcmp(spec.ssh_identifier, "ssh-rsa-cert-v01@openssh.com"))
     {
-          struct b64state b64s;
-          estream_t stream;
-          long int len;
+      struct b64state b64s = {};
+      estream_t stream = NULL;
+      long int b64_cert_buffer_len = 0;
 
-          stream = es_fopenmem(0, "wt");
-          err = b64enc_start_es (&b64s, stream, "");
-          err = b64enc_write (&b64s, cert_buffer, cert_buffer_len);
-          err = b64enc_finish (&b64s);
-          len = es_ftell (stream);
+      stream = es_fopenmem(0, "wt");
+      err = b64enc_start_es (&b64s, stream, "");
+      err = err || b64enc_write (&b64s, cert_buffer, cert_buffer_len);
+      err = err || b64enc_finish (&b64s);
+      if (err)
+        goto out;
 
-          char *result = xtrymalloc (len + 1);
-          size_t nread;
+      b64_cert_buffer_len = es_ftell (stream);
 
-          es_fseek(stream, 0, SEEK_SET);
-          es_read (stream, result, len, &nread);
-          result[len] = 0;
+      char *b64_cert_buffer = xtrymalloc (b64_cert_buffer_len + 1);
+      size_t nread = 0;
 
-          es_fclose (stream);
+      err = es_fseek(stream, 0, SEEK_SET);
+      err = err || es_read (stream, b64_cert_buffer, b64_cert_buffer_len, &nread);
+      if (err)
+        goto out;
+      b64_cert_buffer[b64_cert_buffer_len] = "\0";
 
-          err = gcry_sexp_build (&key, NULL,
-            "(private-key "
-            " (rsa "
-            "  (n %m)"
-            "  (e %m)"
-            "  (d %m)"
-            "  (p %m)"
-            "  (q %m)"
-            "  (u %m)"
-            "  )"
-            " (comment %s)"
-            " (key-type %s)"
-            " (certificate %s)"
-            " )",
-            mpi_list[1], // !swapped 1 and 0
-            mpi_list[0],
-            mpi_list[2],
-            mpi_list[3],
-            mpi_list[4],
-            mpi_list[5],
-            comment!=NULL?comment:"",
-            spec.ssh_identifier,
-            result);
+      es_fclose (stream);
+
+      err = gcry_sexp_build (&key, NULL,
+        "(private-key "
+        " (rsa (n %m) (e %m) (d %m) (p %m) (q %m) (u %m) )"
+        " (comment %s)"
+        " (key-type %s)"
+        " (certificate %s)"
+        " )",
+        // swapped! 1 and 0 required
+        mpi_list[1],  mpi_list[0],  mpi_list[2], mpi_list[3], mpi_list[4], mpi_list[5],
+        comment!=NULL?comment:"",
+        spec.ssh_identifier,
+        b64_cert_buffer);
+
+      xfree(b64_cert_buffer);
+      b64_cert_buffer = NULL;
+
+      if (err)
+        goto out;
     }
   else
     {  
       err = sexp_key_construct (&key, spec, secret, curve_name, mpi_list,
                             comment? comment:"");
+      if (err)
+        goto out;
     }
 
   if (key_spec)
@@ -2449,7 +2446,7 @@ ssh_read_key_public_from_blob (unsigned char *blob, size_t blob_size,
 
 /* This function calculates the key grip for the key contained in the
    S-Expression KEY and writes it to BUFFER, which must be large
-   enough to hold it.  Returns usual error code.  */
+   enough to hold 20 characters.  Returns usual error code.  */
 static gpg_error_t
 ssh_key_grip (gcry_sexp_t key, unsigned char *buffer)
 {
@@ -2459,13 +2456,14 @@ ssh_key_grip (gcry_sexp_t key, unsigned char *buffer)
       return err? err : gpg_error (GPG_ERR_INTERNAL);
     }
 
+  // if the key contains "key-type" update the gcry_pk_get_keygrip computed
+  // keygrip by the hashing it with key-type value
   gcry_sexp_t list = NULL;
-  size_t len = 0;
   const char *data = NULL;
+  size_t data_len = 0;
 
   list = gcry_sexp_find_token (key, "key-type", 0);
-  len = 0;
-  data = gcry_sexp_nth_data(list, 1, &len);
+  data = gcry_sexp_nth_data(list, 1, &data_len);
 
   if (data)
     {
@@ -2473,7 +2471,7 @@ ssh_key_grip (gcry_sexp_t key, unsigned char *buffer)
       gcry_md_open (&md, GCRY_MD_SHA1, 0);
 
       gcry_md_write (md, buffer, 20);
-      gcry_md_write (md, data, len);
+      gcry_md_write (md, data, data_len);
 
       memcpy (buffer, gcry_md_read (md, GCRY_MD_SHA1), 20);
       gcry_md_close (md);
@@ -2767,13 +2765,6 @@ ssh_handler_request_identities (ctrl_t ctrl,
                      gpg_strerror (err));
           continue;
         }
-      if (opt.verbose > 1) {
-          log_info ("fname: %s", cf->fname);
-          log_info ("hexgrip: %s", cf->item.hexgrip);
-          char debug_buffer[8192] = "\0";
-          err = gcry_sexp_sprint (key_public, GCRYSEXP_FMT_ADVANCED, debug_buffer, sizeof(debug_buffer));
-          log_info ("key sExpression: %s", debug_buffer);
-      }
 
       err = ssh_send_key_public (key_blobs, key_public, NULL);
       if (err)
@@ -3253,12 +3244,6 @@ ssh_identity_register (ctrl_t ctrl, ssh_key_type_spec_t *spec,
 	  goto next_try;
 	}
     }
-
-  if (opt.verbose > 1) {
-      char debug_buffer[8192] = "\0";
-      err = gcry_sexp_sprint (key, GCRYSEXP_FMT_ADVANCED, debug_buffer, sizeof(debug_buffer));
-      log_info ("key Sexpression: %s", debug_buffer);
-  }
   
   err = ssh_key_to_protected_buffer (key, pi->pin, &buffer, &buffer_n);
   if (err)

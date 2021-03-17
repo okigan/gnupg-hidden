@@ -1263,16 +1263,6 @@ agent_public_key_from_file (ctrl_t ctrl,
   err = read_key_file (grip, &s_skey);
   if (err)
     return err;
-
-  if (opt.verbose > 1) {
-      char hexgrip[40+4+1];
-      bin2hex (grip, 20, hexgrip);
-
-      log_info ("hexgrip: %s", hexgrip);
-      char debug_buffer[8192] = "\0";
-      err = gcry_sexp_sprint (s_skey, GCRYSEXP_FMT_ADVANCED, debug_buffer, sizeof(debug_buffer));
-      log_info ("loaded key sExpression: %s", debug_buffer);
-  }
   
   for (i=0; i < DIM (array); i++)
     array[i] = NULL;
