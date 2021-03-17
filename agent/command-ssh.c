@@ -1963,11 +1963,11 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
         }
       else
         {
-          /* Note: This is also used for EdDSA.  */
-          err = stream_write_cstring (stream, key_spec.ssh_identifier);
-          if (err)
-            goto out;
-        }
+      /* Note: This is also used for EdDSA.  */
+      err = stream_write_cstring (stream, key_spec.ssh_identifier);
+      if (err)
+        goto out;
+    }
     }
 
   /* Write the parameters.  */
@@ -2016,7 +2016,7 @@ ssh_key_to_blob (gcry_sexp_t sexp, int with_secret,
             goto out;
         }
     }
-    
+
 done:
   if (es_fclose_snatch (stream, &blob, &blob_size))
     {
@@ -2096,15 +2096,9 @@ ssh_receive_key (estream_t stream, gcry_sexp_t *key_new, int secret,
   if (err)
     goto out;
 
-  if (opt.verbose) 
-    log_info("key type: %s", key_type);
-
   err = ssh_key_type_lookup (key_type, 0, &spec);
   if (err)
     goto out;
-
-  if (opt.verbose) 
-    log_info("key spec flags: 0x%x", spec.flags);
 
   unsigned char *cert_buffer = NULL;
   u32 cert_buffer_len = 0;
@@ -2129,10 +2123,6 @@ ssh_receive_key (estream_t stream, gcry_sexp_t *key_new, int secret,
       err = stream_read_cstring (cert, &cert_key_type);
       if (err)
         goto out;
-
-      if (opt.verbose) 
-        log_info ("certificate type: %s", cert_key_type);
-
       if (strcmp (cert_key_type, key_type) )
         {
           xfree (cert_key_type);
@@ -2252,8 +2242,6 @@ ssh_receive_key (estream_t stream, gcry_sexp_t *key_new, int secret,
       err = stream_read_cstring (stream, &comment);
       if (err)
 	goto out;
-      if (opt.verbose) 
-        log_info("key comment: %s", comment);
     }
 
   if (secret)
@@ -2335,9 +2323,9 @@ ssh_receive_key (estream_t stream, gcry_sexp_t *key_new, int secret,
         goto out;
     }
   else
-    {  
+    {
       err = sexp_key_construct (&key, spec, secret, curve_name, mpi_list,
-                            comment? comment:"");
+                                comment? comment:"");
       if (err)
         goto out;
     }
@@ -3244,7 +3232,7 @@ ssh_identity_register (ctrl_t ctrl, ssh_key_type_spec_t *spec,
 	  goto next_try;
 	}
     }
-  
+
   err = ssh_key_to_protected_buffer (key, pi->pin, &buffer, &buffer_n);
   if (err)
     goto out;
